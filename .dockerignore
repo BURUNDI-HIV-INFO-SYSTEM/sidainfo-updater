@@ -1,0 +1,38 @@
+# =============================================================================
+# .dockerignore — excluded from Docker build context
+# =============================================================================
+
+# Environment files — secrets must NOT be baked into the image.
+# The production .env is passed via `env_file` in docker-compose.prod.yml.
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+
+# Node / frontend tooling (not used in this project — CDN-only Tailwind)
+node_modules
+npm-debug.log
+
+# Dev-only Docker files
+docker-compose.yml
+docker-compose.prod.yml
+.claude
+
+# PHP dev / test files
+vendor
+tests
+phpunit.xml
+.phpunit.cache
+
+# Editor / OS metadata
+.DS_Store
+*.swp
+*.swo
+.idea
+.vscode
+
+# Docs
+*.md
