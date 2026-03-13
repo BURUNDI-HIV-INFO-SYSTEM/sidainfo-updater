@@ -11,10 +11,12 @@ services:
     working_dir: /var/www/html
     volumes:
       - ./:/var/www/html
+      - releases_storage:/var/www/html/storage/app/releases
     networks:
       - updater-network
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   webserver:
     image: nginx:alpine
@@ -45,6 +47,12 @@ services:
       - dbdata:/var/lib/mysql
     networks:
       - updater-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD:-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 networks:
   updater-network:
@@ -52,3 +60,4 @@ networks:
 
 volumes:
   dbdata:
+  releases_storage:

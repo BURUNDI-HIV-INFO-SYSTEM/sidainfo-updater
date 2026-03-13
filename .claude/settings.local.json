@@ -4,7 +4,19 @@
       "Bash(cat \"/Users/emugiraneza/DevProjects/SIdainfo-updater/sites_sidainfo_v2 \\(1\\).csv\")",
       "Bash(git init)",
       "Bash(git add .)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(docker compose up -d --build)",
+      "Bash(docker context ls)",
+      "Bash(colima status)",
+      "Bash(docker info)",
+      "Bash(docker context use desktop-linux)",
+      "Bash(docker compose build)",
+      "Bash(open -a \"Docker\")",
+      "Bash(docker compose up -d)",
+      "Bash(docker compose exec app php artisan migrate --force)",
+      "Bash(docker compose exec app php artisan db:seed --force)",
+      "Bash(docker compose exec app php artisan test)",
+      "Bash(git add -A)"
     ]
   }
 }
