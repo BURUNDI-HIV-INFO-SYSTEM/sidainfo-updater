@@ -17,6 +17,11 @@
 #   docker compose -f docker-compose.prod.yml up -d --build
 #   (Migrations run automatically on startup via entrypoint.sh)
 #
+# HOST NGINX:
+#   - This stack does not run a second nginx container in production.
+#   - Point the VPS nginx document root at this checkout's public/ directory.
+#   - Proxy PHP requests to 127.0.0.1:${PHP_FPM_PORT:-9000}.
+#
 # DATA PERSISTENCE:
 #   - MySQL data   → named volume `dbdata`
 #   - Release ZIPs → named volume `releases_storage`
@@ -29,22 +34,21 @@
 #   Releases: docker run --rm -v sidainfo-updater_releases_storage:/data \
 #               -v $(pwd):/backup alpine tar czf /backup/releases-$(date +%Y%m%d).tar.gz -C /data .
 
-version: '3.8'
-
 services:
 
   # ---------------------------------------------------------------------------
-  # PHP-FPM application — code baked into the image
+  # PHP-FPM application — code baked into the image, exposed to host nginx
   # ---------------------------------------------------------------------------
   app:
     build:
       context: .
       dockerfile: docker/php/Dockerfile.prod
-      target: app
     image: sidainfo-updater-app:latest
     container_name: sidainfo-updater-app
     restart: unless-stopped
     env_file: .env
+    ports:
+      - "127.0.0.1:${PHP_FPM_PORT:-9000}:9000"
     volumes:
       # Persistent data only — source code is baked into the image
       - releases_storage:/var/www/html/storage/app/releases
@@ -53,24 +57,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-
-  # ---------------------------------------------------------------------------
-  # Nginx — static assets from image, PHP proxied to app container
-  # ---------------------------------------------------------------------------
-  webserver:
-    build:
-      context: .
-      dockerfile: docker/php/Dockerfile.prod
-      target: webserver
-    image: sidainfo-updater-webserver:latest
-    container_name: sidainfo-updater-webserver
-    restart: unless-stopped
-    ports:
-      - "${APP_PORT:-80}:80"
-    networks:
-      - updater-network
-    depends_on:
-      - app
 
   # ---------------------------------------------------------------------------
   # MySQL 8 — data in named volume, not exposed outside Docker network

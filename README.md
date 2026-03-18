@@ -2,7 +2,7 @@
 
 Central update distribution server for the **SIDAInfo** health facility information system in Burundi. Clinic sites running SIDAInfo automatically check this server for new releases, download them, and report their installed version back.
 
-Built with **Laravel 12**, **MySQL 8**, **Nginx**, and **PHP 8.2-FPM** — all running inside Docker. No PHP, Composer, or npm required on the host machine.
+Built with **Laravel 12**, **MySQL 8**, and **PHP 8.2-FPM** in Docker. In production, the VPS nginx on the main host serves `public/` and forwards PHP requests to the app container.
 
 ---
 
@@ -24,22 +24,26 @@ Built with **Laravel 12**, **MySQL 8**, **Nginx**, and **PHP 8.2-FPM** — all r
 ## Architecture
 
 ```
-┌────────────────────────────────────────────────────┐
-│                  Docker network                    │
-│                                                    │
-│  ┌──────────┐   ┌──────────────┐   ┌───────────┐  │
-│  │  Nginx   │──▶│  PHP-FPM     │──▶│  MySQL 8  │  │
-│  │  :80     │   │  (app)       │   │  (db)     │  │
-│  └──────────┘   └──────────────┘   └───────────┘  │
-│       ▲                                            │
-└───────┼────────────────────────────────────────────┘
-        │
-   SIDAInfo site instances (poll for updates)
+┌──────────────────────────────────────────────────────────┐
+│                       VPS host                           │
+│                                                          │
+│  ┌──────────────┐      fastcgi      ┌─────────────────┐ │
+│  │ Host nginx   │ ─────────────────▶│ PHP-FPM app     │ │
+│  │ serves public│                   │ container :9000 │ │
+│  └──────────────┘                   └────────┬────────┘ │
+│         ▲                                     │          │
+└─────────┼─────────────────────────────────────┼──────────┘
+          │                                     │
+   SIDAInfo site instances                Docker network
+                                                │
+                                           ┌────▼────┐
+                                           │ MySQL 8 │
+                                           │   db    │
+                                           └─────────┘
 ```
 
 | Container | Image | Role |
 |-----------|-------|------|
-| `webserver` | `nginx:alpine` | Reverse proxy + static files |
 | `app` | `php:8.2-fpm` (custom) | Laravel application |
 | `db` | `mysql:8.0` | Database |
 
@@ -54,7 +58,7 @@ Built with **Laravel 12**, **MySQL 8**, **Nginx**, and **PHP 8.2-FPM** — all r
 
 ## Features
 
-- **Release management** — Upload new SIDAInfo release ZIPs (up to 2 GB), activate a release as the current update target, view release history.
+- **Release management** — Upload new SIDAInfo release ZIPs (up to 1 GB), activate a release as the current update target, view release history.
 - **Site tracking** — 497 Burundian health facility sites pre-loaded from CSV; track each site's current version, last check-in, and install status.
 - **Resumable downloads** — HTTP `Range` header support for interrupted ZIP downloads over slow connections.
 - **Install reporting** — Bearer-token-authenticated API endpoint for site instances to report successful installs.
@@ -141,7 +145,7 @@ docker compose down -v
 
 ## Production Deployment
 
-Production uses `docker-compose.prod.yml`. The application code is **baked into the Docker image** — no source bind-mounts needed on the server.
+Production uses `docker-compose.prod.yml`. The application code is **baked into the Docker image** and exposed as PHP-FPM on `127.0.0.1:9000` by default so the VPS nginx can handle all HTTP traffic.
 
 ### First-time setup
 
@@ -176,7 +180,19 @@ Database migrations run automatically on container startup — no manual step re
 
 ### Production notes
 
-- **Port** — set `APP_PORT=` in `.env` to control which host port Nginx binds to (default `80`).
+- **Host nginx** — point nginx `root` to this checkout's `public/` directory and send PHP requests to `127.0.0.1:${PHP_FPM_PORT:-9000}`.
+- **PHP-FPM port** — set `PHP_FPM_PORT=` in `.env` if `9000` is already used. The compose file binds it to `127.0.0.1` only.
+- **Upload size** — the application defaults to a 1 GB release upload limit. Match both PHP and nginx to that value:
+  ```ini
+  upload_max_filesize = 1024M
+  post_max_size = 1024M
+  max_execution_time = 600
+  max_input_time = 600
+  ```
+  ```nginx
+  client_max_body_size 1024M;
+  fastcgi_read_timeout 600;
+  ```
 - **Database** — MySQL is not exposed outside the Docker network. Access it via:
   ```bash
   docker compose -f docker-compose.prod.yml exec db mysql -u${DB_USERNAME} -p
@@ -187,6 +203,31 @@ Database migrations run automatically on container startup — no manual step re
   ```
 - **Sessions and cache** — stored in MySQL; no Redis required.
 
+### Example VPS nginx server block
+
+```nginx
+server {
+    listen 80;
+    server_name updater.example.org;
+    root /srv/sidainfo-updater/public;
+    index index.php;
+
+    client_max_body_size 1024M;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT $realpath_root;
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_read_timeout 600;
+    }
+}
+```
+
 ---
 
 ## Environment Variables
@@ -195,7 +236,7 @@ Database migrations run automatically on container startup — no manual step re
 |----------|----------|-------------|
 | `APP_KEY` | Yes | Laravel encryption key — generate with `php artisan key:generate --show` |
 | `APP_URL` | Yes | Public URL of the server, e.g. `http://192.168.1.10` |
-| `APP_PORT` | No | Host port for Nginx (default: `80`) |
+| `PHP_FPM_PORT` | No | Loopback port exposed for the host nginx `fastcgi_pass` target (default: `9000`) |
 | `APP_DEBUG` | — | Must be `false` in production |
 | `DB_PASSWORD` | Yes | MySQL password for the application user |
 | `DB_ROOT_PASSWORD` | Yes | MySQL root password (used by the healthcheck) |

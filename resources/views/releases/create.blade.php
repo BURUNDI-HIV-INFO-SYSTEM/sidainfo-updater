@@ -5,6 +5,14 @@
 
 @section('content')
 
+@php
+    $uploadLimit = config('releases.upload_limit_human');
+    $phpUploadMaxFilesize = config('releases.php_upload_max_filesize');
+    $phpPostMaxSize = config('releases.php_post_max_size');
+    $nginxClientMaxBodySize = config('releases.nginx_client_max_body_size');
+    $requestTimeoutSeconds = config('releases.request_timeout_seconds');
+@endphp
+
 <div class="max-w-2xl">
     <div class="bg-white rounded-xl border border-slate-200 p-8">
 
@@ -70,13 +78,34 @@
                               d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
                     </svg>
                     <p class="text-sm text-slate-500" id="file-label">Click to select a ZIP file</p>
-                    <p class="text-xs text-slate-400 mt-1">Maximum 2 GB</p>
+                    <p class="text-xs text-slate-400 mt-1">Maximum {{ $uploadLimit }}</p>
                     <input id="zip_file" name="zip_file" type="file" accept=".zip" required class="hidden"
                            onchange="document.getElementById('file-label').textContent = this.files[0]?.name ?? 'No file selected'">
                 </div>
                 @error('zip_file')
                     <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
                 @enderror
+            </div>
+
+            <div class="mb-8 rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-950">
+                <p class="font-semibold">Server upload requirements</p>
+                <p class="mt-1 text-amber-900">
+                    Release uploads are capped at {{ $uploadLimit }}. Configure PHP and the host nginx to allow at least that size before using this form.
+                </p>
+                <div class="mt-3 grid gap-3 md:grid-cols-2">
+                    <div class="rounded-md border border-amber-200 bg-white px-3 py-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">PHP</p>
+                        <pre class="mt-2 whitespace-pre-wrap font-mono text-xs text-slate-700">upload_max_filesize = {{ $phpUploadMaxFilesize }}
+post_max_size = {{ $phpPostMaxSize }}
+max_execution_time = {{ $requestTimeoutSeconds }}
+max_input_time = {{ $requestTimeoutSeconds }}</pre>
+                    </div>
+                    <div class="rounded-md border border-amber-200 bg-white px-3 py-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">Host nginx</p>
+                        <pre class="mt-2 whitespace-pre-wrap font-mono text-xs text-slate-700">client_max_body_size {{ $nginxClientMaxBodySize }};
+fastcgi_read_timeout {{ $requestTimeoutSeconds }};</pre>
+                    </div>
+                </div>
             </div>
 
             <div class="flex items-center gap-4">

@@ -45,7 +45,10 @@ class ReleaseTest extends TestCase
     {
         $this->actingAs($this->admin())
              ->get('/releases/new')
-             ->assertOk();
+             ->assertOk()
+             ->assertSee('Maximum 1 GB')
+             ->assertSee('upload_max_filesize = 1024M')
+             ->assertSee('client_max_body_size 1024M;');
     }
 
     public function test_release_can_be_uploaded(): void

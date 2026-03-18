@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   app:
     build:
@@ -11,6 +9,7 @@ services:
     working_dir: /var/www/html
     volumes:
       - ./:/var/www/html
+      - ./docker/php/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
       - releases_storage:/var/www/html/storage/app/releases
     networks:
       - updater-network

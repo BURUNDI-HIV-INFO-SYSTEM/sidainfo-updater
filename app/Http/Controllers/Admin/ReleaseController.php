@@ -27,7 +27,7 @@ class ReleaseController extends Controller
     {
         $request->validate([
             'version'                  => 'required|string|max:50|unique:releases,version',
-            'zip_file'                 => 'required|file|mimes:zip|max:2097152', // 2 GB
+            'zip_file'                 => 'required|file|mimes:zip|max:' . config('releases.upload_limit_kilobytes'),
             'notes'                    => 'nullable|string',
             'minimum_required_version' => 'nullable|string|max:50',
             'published_at'             => 'nullable|date',
