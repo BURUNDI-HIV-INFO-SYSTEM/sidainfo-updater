@@ -12,7 +12,11 @@ Built with **Laravel 12**, **MySQL 8**, and **PHP 8.2-FPM** in Docker. In produc
 - [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Development Setup](#development-setup)
-- [Production Deployment](#production-deployment)
+- [Server Deployment](#server-deployment)
+  - [First-time setup](#first-time-setup)
+  - [Staging vs production](#staging-vs-production)
+  - [Subsequent deployments](#subsequent-deployments)
+  - [Manual nginx setup](#manual-nginx-setup)
 - [Environment Variables](#environment-variables)
 - [Admin UI](#admin-ui)
 - [API Reference](#api-reference)
@@ -54,6 +58,8 @@ Built with **Laravel 12**, **MySQL 8**, and **PHP 8.2-FPM** in Docker. In produc
 | `dbdata` | MySQL database files |
 | `releases_storage` | Uploaded release ZIP archives |
 
+Both staging and production run as separate Docker Compose projects (`sidainfo-staging`, `sidainfo-production`) on the same VPS, each with their own isolated volumes, network, and PHP-FPM port.
+
 ---
 
 ## Features
@@ -69,10 +75,16 @@ Built with **Laravel 12**, **MySQL 8**, and **PHP 8.2-FPM** in Docker. In produc
 
 ## Prerequisites
 
+**Local development:**
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Docker Compose v2)
 - Git
 
-That's it. No PHP, Composer, or npm needed on the host.
+**VPS / server:**
+- Docker Engine + Docker Compose v2
+- nginx (already installed on the VPS)
+- Git
+
+No PHP, Composer, or npm needed on any machine.
 
 ---
 
@@ -143,9 +155,22 @@ docker compose down -v
 
 ---
 
-## Production Deployment
+## Server Deployment
 
-Production uses `docker-compose.prod.yml`. The application code is **baked into the Docker image** and exposed as PHP-FPM on `127.0.0.1:9000` by default so the VPS nginx can handle all HTTP traffic.
+All server deployments are handled by a single script: **`deploy.sh`**
+
+```
+./deploy.sh [staging|production] [--first-run]
+```
+
+The script:
+1. Validates Docker and git are available
+2. Checks the `.env` file is filled in (copies the template and exits if not)
+3. Pulls the latest code from git
+4. Builds Docker images and restarts containers
+5. Waits for PHP-FPM to be ready (migrations run automatically inside the container)
+6. Seeds the database on `--first-run`
+7. Writes / updates the nginx site config and reloads nginx
 
 ### First-time setup
 
@@ -154,79 +179,90 @@ Production uses `docker-compose.prod.yml`. The application code is **baked into 
 git clone https://github.com/BURUNDI-HIV-INFO-SYSTEM/sidainfo-updater.git
 cd sidainfo-updater
 
-# 2. Create the production environment file
-cp .env.production .env
-nano .env   # fill in all required values (see Environment Variables below)
+# 2. Make the deploy script executable
+chmod +x deploy.sh
 
-# 3. Generate a Laravel app key
-docker compose -f docker-compose.prod.yml run --rm app php artisan key:generate --show
-# Copy the output and set it as APP_KEY= in your .env
+# 3. Run for the target environment — it will copy the .env template and exit
+./deploy.sh production --first-run
+# OR
+./deploy.sh staging --first-run
 
-# 4. Build images and start all services
-docker compose -f docker-compose.prod.yml up -d --build
+# 4. Fill in the generated .env file
+#    Production → .env
+#    Staging    → .env.staging.local
+nano .env   # (or .env.staging.local for staging)
 
-# 5. Seed the database (first deploy only)
-docker compose -f docker-compose.prod.yml exec app php artisan db:seed --force
+# 5. Generate and paste in an app key
+docker compose --project-name sidainfo-production \
+  -f docker-compose.prod.yml run --rm app php artisan key:generate --show
+# Copy the output → APP_KEY=... in your .env
+
+# 6. Run deploy again — this time it will go all the way through
+./deploy.sh production --first-run
 ```
+
+### Staging vs production
+
+Both environments run independently on the same VPS:
+
+| | Staging | Production |
+|---|---------|------------|
+| env file | `.env.staging.local` | `.env` |
+| template | `.env.staging` | `.env.production` |
+| Docker project | `sidainfo-staging` | `sidainfo-production` |
+| PHP-FPM port | `9001` | `9000` |
+| nginx site | `sidainfo-staging` | `sidainfo-production` |
+| Docker volumes | `sidainfo-staging_dbdata` etc. | `sidainfo-production_dbdata` etc. |
+
+> Data is fully isolated — a staging deploy never touches the production database or release files.
 
 ### Subsequent deployments
 
 ```bash
-git pull origin main
-docker compose -f docker-compose.prod.yml up -d --build
+# Deploy latest code to production
+./deploy.sh production
+
+# Deploy latest code to staging
+./deploy.sh staging
 ```
 
-Database migrations run automatically on container startup — no manual step required.
+Database migrations run automatically inside the container on startup — no separate step needed.
+
+### Manual nginx setup
+
+If you prefer to manage nginx yourself, use the template at `nginx/app.conf.template`. Replace the three placeholders and copy it to `/etc/nginx/sites-available/`:
+
+| Placeholder | Replace with |
+|-------------|--------------|
+| `__SERVER_NAME__` | Your subdomain, e.g. `updater.example.org` |
+| `__APP_ROOT__` | Absolute path to the project's `public/` directory |
+| `__PHP_FPM_PORT__` | `9000` for production, `9001` for staging |
+
+```bash
+sed \
+  -e 's|__SERVER_NAME__|updater.example.org|g' \
+  -e 's|__APP_ROOT__|/srv/sidainfo-updater/public|g' \
+  -e 's|__PHP_FPM_PORT__|9000|g' \
+  nginx/app.conf.template \
+  | sudo tee /etc/nginx/sites-available/sidainfo-production
+
+sudo ln -s /etc/nginx/sites-available/sidainfo-production /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
 
 ### Production notes
 
-- **Host nginx** — point nginx `root` to this checkout's `public/` directory and send PHP requests to `127.0.0.1:${PHP_FPM_PORT:-9000}`.
-- **PHP-FPM port** — set `PHP_FPM_PORT=` in `.env` if `9000` is already used. The compose file binds it to `127.0.0.1` only.
-- **Upload size** — the application defaults to a 1 GB release upload limit. Match both PHP and nginx to that value:
-  ```ini
-  upload_max_filesize = 1024M
-  post_max_size = 1024M
-  max_execution_time = 600
-  max_input_time = 600
-  ```
-  ```nginx
-  client_max_body_size 1024M;
-  fastcgi_read_timeout 600;
-  ```
+- **PHP-FPM port** — set `PHP_FPM_PORT=` in `.env` to override the default. The compose file binds it to `127.0.0.1` only (not reachable from outside the VPS).
+- **Upload size** — the application defaults to a 1 GB release upload limit. The nginx template and `docker/php/php.ini` are already configured to match.
 - **Database** — MySQL is not exposed outside the Docker network. Access it via:
   ```bash
-  docker compose -f docker-compose.prod.yml exec db mysql -u${DB_USERNAME} -p
+  docker compose --project-name sidainfo-production -f docker-compose.prod.yml exec db mysql -u${DB_USERNAME} -p
   ```
 - **Logs** — go to `stderr` and are visible via:
   ```bash
-  docker compose -f docker-compose.prod.yml logs -f app
+  docker compose --project-name sidainfo-production -f docker-compose.prod.yml logs -f app
   ```
 - **Sessions and cache** — stored in MySQL; no Redis required.
-
-### Example VPS nginx server block
-
-```nginx
-server {
-    listen 80;
-    server_name updater.example.org;
-    root /srv/sidainfo-updater/public;
-    index index.php;
-
-    client_max_body_size 1024M;
-
-    location / {
-        try_files $uri $uri/ /index.php?$query_string;
-    }
-
-    location ~ \.php$ {
-        include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
-        fastcgi_param DOCUMENT_ROOT $realpath_root;
-        fastcgi_pass 127.0.0.1:9000;
-        fastcgi_read_timeout 600;
-    }
-}
-```
 
 ---
 
@@ -235,8 +271,9 @@ server {
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `APP_KEY` | Yes | Laravel encryption key — generate with `php artisan key:generate --show` |
-| `APP_URL` | Yes | Public URL of the server, e.g. `http://192.168.1.10` |
-| `PHP_FPM_PORT` | No | Loopback port exposed for the host nginx `fastcgi_pass` target (default: `9000`) |
+| `APP_URL` | Yes | Public URL of the server, e.g. `http://updater.example.org` — used by `deploy.sh` to configure nginx |
+| `PHP_FPM_PORT` | No | Host loopback port exposed for nginx `fastcgi_pass` (default: `9000` for production, `9001` for staging) |
+| `APP_ENV` | — | `production` or `staging` |
 | `APP_DEBUG` | — | Must be `false` in production |
 | `DB_PASSWORD` | Yes | MySQL password for the application user |
 | `DB_ROOT_PASSWORD` | Yes | MySQL root password (used by the healthcheck) |
@@ -244,7 +281,7 @@ server {
 | `ADMIN_PASSWORD` | Yes | Admin account password, created on first `db:seed` |
 | `LARAUPDATER_STATUS_REPORT_TOKEN` | Recommended | Bearer token site instances must include when calling `/api/site-install-status`. Generate: `openssl rand -hex 32`. Leave empty to disable verification. |
 
-See `.env.production` for the full annotated template.
+See `.env.production` and `.env.staging` for fully annotated templates.
 
 ---
 
@@ -281,35 +318,41 @@ Returns the active release manifest. Called by site instances on startup to chec
 
 | Parameter | Description |
 |-----------|-------------|
-| `siteid` | 8-digit site ID (e.g. `01010103`) |
+| `siteid` | 8-digit site ID (e.g. `01010103`) — if provided, a `manifest_check` event is logged for the site |
 | `current_version` | Version string currently installed at the site |
 
 **Response `200 OK`**
 ```json
 {
   "version": "2.1.0",
-  "archive_name": "RELEASE-2.1.0.zip",
-  "download_url": "http://your-server/RELEASE-2.1.0.zip",
+  "archive": "RELEASE-2.1.0.zip",
+  "description": "Bug fixes and performance improvements",
   "sha256": "a3f2c8d9...",
   "size_bytes": 157286400,
-  "minimum_required_version": null,
-  "notes": "Bug fixes and performance improvements"
+  "published_at": "2026-03-13T10:00:00+00:00",
+  "minimum_supported_version": "1.5.0"
 }
 ```
 
-Returns `204 No Content` when no active release exists.
+Fields `sha256`, `size_bytes`, `published_at`, and `minimum_supported_version` are only present when set on the release.
+
+Returns `404` when no active release exists.
+
+> **Client requirement:** the client validates that both `version` and `archive` are non-empty before proceeding with the update.
 
 ---
 
 ### `GET /RELEASE-{version}.zip`
 
-Downloads the release ZIP archive. Supports HTTP `Range` headers for resumable downloads over unreliable connections.
+Downloads the release ZIP archive. Handled by Laravel (not nginx directly) to support HTTP `Range` headers for resumable downloads over unreliable connections.
 
 **Example with range:**
 ```
 GET /RELEASE-2.1.0.zip HTTP/1.1
 Range: bytes=10485760-
 ```
+
+Returns `206 Partial Content` with a `Content-Range` header when a range is requested.
 
 ---
 
@@ -347,18 +390,20 @@ Content-Type: application/json
 
 > Run backup commands regularly. Both the database and release files must be backed up.
 
+Set the project name (`sidainfo-production` or `sidainfo-staging`) to match your environment.
+
 ### Database
 
 **Backup**
 ```bash
-docker compose -f docker-compose.prod.yml exec db \
+docker compose --project-name sidainfo-production -f docker-compose.prod.yml exec db \
   mysqldump -uroot -p${DB_ROOT_PASSWORD} sidainfo_updater > backup-$(date +%Y%m%d).sql
 ```
 
 **Restore**
 ```bash
 cat backup-20260101.sql | \
-  docker compose -f docker-compose.prod.yml exec -T db \
+  docker compose --project-name sidainfo-production -f docker-compose.prod.yml exec -T db \
   mysql -uroot -p${DB_ROOT_PASSWORD} sidainfo_updater
 ```
 
@@ -367,7 +412,7 @@ cat backup-20260101.sql | \
 **Backup**
 ```bash
 docker run --rm \
-  -v sidainfo-updater_releases_storage:/data \
+  -v sidainfo-production_releases_storage:/data \
   -v $(pwd):/backup \
   alpine tar czf /backup/releases-$(date +%Y%m%d).tar.gz -C /data .
 ```
@@ -375,7 +420,7 @@ docker run --rm \
 **Restore**
 ```bash
 docker run --rm \
-  -v sidainfo-updater_releases_storage:/data \
+  -v sidainfo-production_releases_storage:/data \
   -v $(pwd):/backup \
   alpine tar xzf /backup/releases-20260101.tar.gz -C /data
 ```

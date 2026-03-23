@@ -1,0 +1,65 @@
+# =============================================================================
+# SIDAInfo Update Server — nginx server block template
+# =============================================================================
+# This file is used by deploy.sh — do not edit the deployed copy directly.
+# Re-run deploy.sh to regenerate it.
+#
+# Placeholders substituted by deploy.sh:
+#   __SERVER_NAME__   →  hostname extracted from APP_URL in .env
+#   __APP_ROOT__      →  absolute path to the project's public/ directory
+#   __PHP_FPM_PORT__  →  PHP_FPM_PORT from .env  (production: 9000, staging: 9001)
+# =============================================================================
+
+server {
+    listen 80;
+    server_name __SERVER_NAME__;
+
+    root  __APP_ROOT__;
+    index index.php;
+
+    # Match the application's 1 GB upload limit (config/releases.php)
+    client_max_body_size 1024M;
+
+    access_log /var/log/nginx/__SERVER_NAME__.access.log;
+    error_log  /var/log/nginx/__SERVER_NAME__.error.log warn;
+
+    # ---------------------------------------------------------------------------
+    # Static assets — served directly by nginx, Laravel handles everything else
+    # ---------------------------------------------------------------------------
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # ---------------------------------------------------------------------------
+    # Release ZIP downloads
+    # Must pass through Laravel: it handles Range headers, access control, and
+    # logs a download event. Do NOT let nginx serve these files directly.
+    # ---------------------------------------------------------------------------
+    location ~* ^/RELEASE-[0-9a-zA-Z._-]+\.zip$ {
+        try_files /nonexistent /index.php?$query_string;
+    }
+
+    # ---------------------------------------------------------------------------
+    # PHP-FPM — all .php requests go to the app container
+    # ---------------------------------------------------------------------------
+    location ~ \.php$ {
+        include        fastcgi_params;
+        fastcgi_param  SCRIPT_FILENAME  $realpath_root$fastcgi_script_name;
+        fastcgi_param  DOCUMENT_ROOT    $realpath_root;
+        fastcgi_pass   127.0.0.1:__PHP_FPM_PORT__;
+
+        # Allow large ZIP uploads and slow downloads over rural connections
+        fastcgi_read_timeout  600;
+        fastcgi_send_timeout  600;
+
+        # Buffering — disabled for streaming downloads
+        fastcgi_buffering off;
+    }
+
+    # ---------------------------------------------------------------------------
+    # Security — deny access to hidden files (.env, .git, etc.)
+    # ---------------------------------------------------------------------------
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}

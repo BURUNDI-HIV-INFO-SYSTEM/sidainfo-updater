@@ -38,13 +38,14 @@ services:
 
   # ---------------------------------------------------------------------------
   # PHP-FPM application — code baked into the image, exposed to host nginx
+  # Container name is auto-assigned by Docker Compose using the project name
+  # (set via --project-name in deploy.sh: sidainfo-production or sidainfo-staging)
   # ---------------------------------------------------------------------------
   app:
     build:
       context: .
       dockerfile: docker/php/Dockerfile.prod
     image: sidainfo-updater-app:latest
-    container_name: sidainfo-updater-app
     restart: unless-stopped
     env_file: .env
     ports:
@@ -63,7 +64,6 @@ services:
   # ---------------------------------------------------------------------------
   db:
     image: mysql:8.0
-    container_name: sidainfo-updater-db
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${DB_DATABASE}
