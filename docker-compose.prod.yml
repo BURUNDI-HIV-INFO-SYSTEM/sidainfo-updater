@@ -47,7 +47,8 @@ services:
       dockerfile: docker/php/Dockerfile.prod
     image: sidainfo-updater-app:latest
     restart: unless-stopped
-    env_file: .env
+    # env file is set by deploy.sh via COMPOSE_ENV_FILE (staging → .env.staging.local, production → .env)
+    env_file: ${COMPOSE_ENV_FILE:-.env}
     ports:
       - "127.0.0.1:${PHP_FPM_PORT:-9000}:9000"
     volumes:

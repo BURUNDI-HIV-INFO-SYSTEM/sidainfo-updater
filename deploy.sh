@@ -91,6 +91,12 @@ env_val() {
 }
 
 # ---------------------------------------------------------------------------
+# Export so docker-compose.prod.yml can resolve ${COMPOSE_ENV_FILE} and load
+# the correct env_file into the container (staging vs production)
+# ---------------------------------------------------------------------------
+export COMPOSE_ENV_FILE="$ENV_FILE"
+
+# ---------------------------------------------------------------------------
 # Helper: run docker compose with the right project, file, and env
 # ---------------------------------------------------------------------------
 dc() {
@@ -123,6 +129,22 @@ command -v nginx >/dev/null 2>&1 \
   || warn "nginx not found on PATH — nginx setup step will be skipped."
 
 log "Prerequisites satisfied."
+
+# ===========================================================================
+step "1b/7 Checking for conflicting containers"
+# ===========================================================================
+# The production stack is PHP-FPM + MySQL only. The host nginx handles HTTP.
+# If someone previously ran `docker compose up` (dev stack), an nginx container
+# named `sidainfo-updater-webserver` may still be running — stop it now.
+DEV_NGINX="sidainfo-updater-webserver"
+if docker inspect "$DEV_NGINX" >/dev/null 2>&1; then
+  warn "Found dev-stack nginx container ($DEV_NGINX) — stopping and removing it."
+  warn "The host nginx handles all HTTP in production; no nginx container is needed."
+  docker stop "$DEV_NGINX" && docker rm "$DEV_NGINX"
+  log "Removed $DEV_NGINX."
+else
+  log "No conflicting nginx container found."
+fi
 
 # ===========================================================================
 step "2/7  Checking environment file ($ENV_FILE)"
