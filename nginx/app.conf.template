@@ -42,10 +42,14 @@ server {
     # ---------------------------------------------------------------------------
     # PHP-FPM — all .php requests go to the app container
     # ---------------------------------------------------------------------------
+    # IMPORTANT: nginx's `root` above is the HOST path (for serving static files).
+    # PHP-FPM runs inside Docker where the app lives at /var/www/html.
+    # SCRIPT_FILENAME must use the CONTAINER path, not $realpath_root.
+    # ---------------------------------------------------------------------------
     location ~ \.php$ {
         include        fastcgi_params;
-        fastcgi_param  SCRIPT_FILENAME  $realpath_root$fastcgi_script_name;
-        fastcgi_param  DOCUMENT_ROOT    $realpath_root;
+        fastcgi_param  SCRIPT_FILENAME  /var/www/html/public$fastcgi_script_name;
+        fastcgi_param  DOCUMENT_ROOT    /var/www/html/public;
         fastcgi_pass   127.0.0.1:__PHP_FPM_PORT__;
 
         # Allow large ZIP uploads and slow downloads over rural connections
