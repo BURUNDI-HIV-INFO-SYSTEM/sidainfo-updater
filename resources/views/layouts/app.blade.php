@@ -41,6 +41,14 @@
                      'icon'  => 'M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10'],
                     ['route' => 'sites.index',    'match' => 'sites.*',      'label' => 'Sites',
                      'icon'  => 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4'],
+                    ['route' => 'users.index',    'match' => 'users.*',      'label' => 'Users',
+                     'icon'  => 'M17 20h5V18a4 4 0 00-5.874-3.543M17 20H7m10 0v-2c0-.653-.126-1.277-.355-1.848M7 20H2V18a4 4 0 015.874-3.543M7 20v-2c0-.653.126-1.277.355-1.848m0 0a5.002 5.002 0 019.29 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z'],
+                    ['route' => 'backups.index',  'match' => 'backups.*',    'label' => 'Backups',
+                     'icon'  => 'M4 7h16M4 12h16m-7 5h7M7 17H4m0-10l1.293-1.293A1 1 0 016 5h12a1 1 0 01.707.293L20 7m-9 5l-3 3m0 0l-3-3m3 3V7'],
+                    ['route' => 'tarifs.index',        'match' => 'tarifs.*',         'label' => 'Tarifs',
+                     'icon'  => 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z'],
+                    ['route' => 'examens-config.index','match' => 'examens-config.*', 'label' => 'Examens',
+                     'icon'  => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01'],
                 ];
             @endphp
 
@@ -82,6 +90,10 @@
                 <div class="flex-1 min-w-0">
                     <div class="text-sm font-medium text-white truncate">{{ auth()->user()->name }}</div>
                     <div class="text-xs truncate" style="color:#64748b">{{ auth()->user()->email }}</div>
+                    <a href="{{ route('profile.edit') }}"
+                       class="mt-1 inline-block text-xs text-blue-300 hover:text-blue-200">
+                        Profile settings
+                    </a>
                 </div>
                 {{-- Sign out button --}}
                 <form method="POST" action="{{ route('logout') }}">

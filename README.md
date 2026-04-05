@@ -17,6 +17,11 @@ Built with **Laravel 12**, **MySQL 8**, and **PHP 8.2-FPM** in Docker. In produc
   - [Staging vs production](#staging-vs-production)
   - [Subsequent deployments](#subsequent-deployments)
   - [Manual nginx setup](#manual-nginx-setup)
+- [Upgrading a Live Server](#upgrading-a-live-server)
+  - [How data is preserved](#how-data-is-preserved)
+  - [Standard upgrade procedure](#standard-upgrade-procedure)
+  - [After specific releases](#after-specific-releases)
+  - [Rollback procedure](#rollback-procedure)
 - [Environment Variables](#environment-variables)
 - [Admin UI](#admin-ui)
 - [API Reference](#api-reference)
@@ -266,6 +271,121 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ---
 
+## Upgrading a Live Server
+
+This section explains how to apply a new version of the Update Server to an already-running production (or staging) deployment without losing any data.
+
+### How data is preserved
+
+All persistent data lives in **named Docker volumes**, not inside the image or in the checkout directory. This is the key safety property of the Docker setup:
+
+| Volume | What it contains | Survives image rebuild? |
+|--------|-----------------|------------------------|
+| `sidainfo-production_dbdata` | MySQL database (all tables, all rows) | Yes |
+| `sidainfo-production_releases_storage` | Uploaded release ZIP archives | Yes |
+
+When `docker compose up -d --build` rebuilds the image, Docker creates a **new image** with the updated source code but **re-attaches the existing volumes**. No data is touched.
+
+The only way to destroy data is to run `docker compose down -v` — the `-v` flag explicitly deletes volumes. Never run it on a live server unless you intend to wipe everything.
+
+### Standard upgrade procedure
+
+This is what `./deploy.sh production` does for a routine code update. Run it from the repository directory on the VPS:
+
+```bash
+# Step 1 — (Optional but strongly recommended) back up the database first
+docker compose --project-name sidainfo-production -f docker-compose.prod.yml exec db \
+  mysqldump -uroot -p${DB_ROOT_PASSWORD} sidainfo_updater > backup-pre-upgrade-$(date +%Y%m%d-%H%M).sql
+
+# Step 2 — Deploy
+./deploy.sh production
+```
+
+`deploy.sh` will:
+1. Pull the latest code (`git pull`)
+2. Rebuild the Docker image with the new source code
+3. Restart the `app` container (the `db` container is **not** restarted — data is untouched)
+4. On container startup, the entrypoint automatically runs `php artisan migrate --force` — this applies any new database migrations
+
+> **Downtime:** the `app` container restarts for roughly 5–15 seconds during the rebuild. The database is up the entire time.
+
+### After specific releases
+
+Some releases add new database tables or reference data that require a one-time seeder run after the migration. Check the release notes. The table below lists every release that needs extra steps:
+
+| Release | New tables | Extra step required |
+|---------|-----------|---------------------|
+| Tarifs + Examens config feature | `tarifs_centraux`, `examens_config` | Run the exam seeder (see below) |
+
+#### Seeding exam codes after the Tarifs/Examens config release
+
+The `examens_config` table must be pre-populated with the 42 valid exam codes. The seeder is **idempotent** — running it again on an already-populated table only updates names, never deletes rows.
+
+```bash
+# After ./deploy.sh production has completed:
+docker compose --project-name sidainfo-production -f docker-compose.prod.yml \
+  exec app php artisan db:seed --class=ExamenConfigSeeder --force
+```
+
+Verify it worked:
+
+```bash
+docker compose --project-name sidainfo-production -f docker-compose.prod.yml \
+  exec db mysql -u${DB_USERNAME} -p${DB_PASSWORD} sidainfo_updater \
+  -e "SELECT COUNT(*) AS exam_count FROM examens_config;"
+# Expected: 42
+```
+
+Then open `/examens-config` in the admin UI and `/tarifs` to set prices for the current year.
+
+### Rollback procedure
+
+If the new release causes a problem and you need to revert:
+
+**1. Restore the pre-upgrade database backup**
+
+```bash
+# Stop the app container so nothing is writing to the DB
+docker compose --project-name sidainfo-production -f docker-compose.prod.yml stop app
+
+# Restore
+cat backup-pre-upgrade-YYYYMMDD-HHMM.sql | \
+  docker compose --project-name sidainfo-production -f docker-compose.prod.yml exec -T db \
+  mysql -uroot -p${DB_ROOT_PASSWORD} sidainfo_updater
+
+echo "Database restored."
+```
+
+**2. Check out the previous version of the code**
+
+```bash
+# Find the previous commit or tag
+git log --oneline -10
+
+# Roll back the working tree (replace <previous-sha> with the commit you want)
+git checkout <previous-sha>
+```
+
+**3. Rebuild and restart from the old code**
+
+```bash
+docker compose --project-name sidainfo-production -f docker-compose.prod.yml \
+  up -d --build
+```
+
+The entrypoint will run `php artisan migrate --force` against the restored database — this is safe because the restored DB is already at the migration state that matches the old code.
+
+**4. Verify, then return to main when ready**
+
+```bash
+# Test the old version is working, then restore the branch pointer
+git checkout main
+```
+
+> **Important:** if the failed release added new migrations that ran before you noticed the problem, the database may already have the new tables. Restoring the SQL dump from before the upgrade is the safest path — it resets the schema to the known-good state.
+
+---
+
 ## Environment Variables
 
 | Variable | Required | Description |
@@ -303,6 +423,22 @@ See `.env.production` and `.env.staging` for fully annotated templates.
 - Filter by province, district, status (`up-to-date`, `pending`, `unknown`), or version
 - Full-text search by site name or ID
 - Per-site detail page: complete event timeline of every manifest check and install report
+
+### Tarifs `/tarifs`
+- Set the unit price (in BIF) for each biological exam, per year
+- Select any year via the year dropdown; prices for different years are stored independently
+- Only exams with a price > 0 are exposed by the public `GET /api/tarifs` endpoint
+- **Manual entry** — edit any number of rows in the table then click **Enregistrer**
+- **Excel import** — download the pre-filled template, fill in the `prix_bif` column, upload it:
+  - Template has all 42 exam codes and names pre-filled; existing prices for the selected year are included
+  - Only the `prix_bif` column is imported — `code_examen`, `nom_examen`, and `annee` are read-only reference columns
+  - Rows with an empty `prix_bif` are skipped; rows with unknown `code_examen` values are skipped and listed in the result message
+  - Both `.xlsx` and `.xls` formats accepted
+
+### Configuration des examens `/examens-config`
+- Edit the French display name and normal / critical reference ranges for each of the 42 exam types
+- Changes are exposed immediately by the public `GET /api/examens` endpoint
+- Codes are fixed (they map 1:1 to columns in the `bilans` table on site instances) — names and ranges can be freely updated
 
 ---
 
@@ -383,6 +519,71 @@ Content-Type: application/json
 | `401` | Missing or invalid bearer token |
 | `404` | Unknown `siteid` |
 | `422` | Validation error |
+
+---
+
+### `GET /api/tarifs`
+
+Returns the exam price list for a given year. Called by SIDAInfo site instances during tarif synchronisation.
+
+**Query parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `annee` | integer | yes | Pricing year (e.g. `2026`) |
+
+**Response `200 OK`**
+```json
+[
+  { "code_examen": "nfs_hemoglobine", "prix": 2500.00, "devise": "BIF", "annee": 2026 },
+  { "code_examen": "glycemie",        "prix": 1500.00, "devise": "BIF", "annee": 2026 }
+]
+```
+
+Only exams with a configured price > 0 are included. Returns an empty array `[]` if no prices are set for the requested year.
+
+No authentication required.
+
+---
+
+### `GET /api/examens`
+
+Returns the full list of exam types with their display names and normal/critical reference ranges. Called by SIDAInfo site instances during exam configuration synchronisation.
+
+**No parameters.**
+
+**Response `200 OK`**
+```json
+[
+  {
+    "code":            "nfs_hemoglobine",
+    "nom_examen":      "Hémoglobine",
+    "valeur_usuelle1": 12.0,
+    "valeur_usuelle2": 17.0,
+    "limite1":         8.0,
+    "limite2":         20.0
+  },
+  {
+    "code":            "glycemie",
+    "nom_examen":      "Glycémie",
+    "valeur_usuelle1": 3.9,
+    "valeur_usuelle2": 6.1,
+    "limite1":         null,
+    "limite2":         null
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `code` | string | Fixed exam code — maps to a column in `bilans` on site instances |
+| `nom_examen` | string | French display name shown in lab result reports |
+| `valeur_usuelle1` | number \| null | Lower bound of normal range |
+| `valeur_usuelle2` | number \| null | Upper bound of normal range |
+| `limite1` | number \| null | Lower critical / alerting threshold |
+| `limite2` | number \| null | Upper critical / alerting threshold |
+
+No authentication required. Returns all 42 exam types regardless of whether ranges are configured.
 
 ---
 
